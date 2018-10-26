@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
+
 """
 Test ScrollZoomToggler
 ----------------------
 """
 
-from jinja2 import Template
+from __future__ import (absolute_import, division, print_function)
 
 import folium
+
 from folium import plugins
+
+from jinja2 import Template
+
 
 def test_scroll_zoom_toggler():
     m = folium.Map([45., 3.], zoom_start=4)
     szt = plugins.ScrollZoomToggler()
-    m.add_children(szt)
+    m.add_child(szt)
     m._repr_html_()
 
     out = m._parent.render()
@@ -20,7 +25,8 @@ def test_scroll_zoom_toggler():
     # Verify that the div has been created.
     tmpl = Template("""
         <img id="{{this.get_name()}}" alt="scroll"
-        src="https://cdnjs.cloudflare.com/ajax/libs/ionicons/1.5.2/png/512/arrow-move.png"
+        src="https://cdnjs.cloudflare.com/ajax/libs/ionicons/2.0.1/png/512/arrow-move.png"
+        style="z-index: 999999"
         onclick="{{this._parent.get_name()}}.toggleScroll()"></img>
     """)
     assert ''.join(tmpl.render(this=szt).split()) in ''.join(out.split())
@@ -61,3 +67,6 @@ def test_scroll_zoom_toggler():
         {{this._parent.get_name()}}.toggleScroll();
     """)
     assert ''.join(tmpl.render(this=szt).split()) in ''.join(out.split())
+
+    bounds = m.get_bounds()
+    assert bounds == [[None, None], [None, None]], bounds

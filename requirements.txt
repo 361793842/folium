@@ -1,1 +1,5 @@
-Jinja2
+branca>=0.3.0
+jinja2
+numpy
+requests
+six

@@ -1,17 +1,24 @@
 # -*- coding: utf-8 -*-
+
 """
 Test MarkerCluster
 ------------------
 """
 
-from jinja2 import Template
-import numpy as np
+from __future__ import (absolute_import, division, print_function)
 
 import folium
+
 from folium import plugins
+
+from jinja2 import Template
+
+import numpy as np
+
 
 def test_marker_cluster():
     N = 100
+    np.random.seed(seed=26082009)
     data = np.array([
         np.random.uniform(low=35, high=60, size=N),   # Random latitudes.
         np.random.uniform(low=-12, high=30, size=N),  # Random longitudes.
@@ -19,23 +26,23 @@ def test_marker_cluster():
         ]).T
     m = folium.Map([45., 3.], zoom_start=4)
     mc = plugins.MarkerCluster(data)
-    m.add_children(mc)
+    m.add_child(mc)
     m._repr_html_()
 
     out = m._parent.render()
 
     # We verify that imports
-    assert ('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.'
-            'markercluster/0.4.0/leaflet.markercluster.js"></script>') in out
-    assert ('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/'
-            'libs/leaflet.markercluster/0.4.0/MarkerCluster.css" />') in out
-    assert ('<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/'
-            'libs/leaflet.markercluster/0.4.0/MarkerCluster.Default.css" />'
-            ) in out
+    assert '<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/leaflet.markercluster.js"></script>' in out  # noqa
+    assert '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.css"/>' in out  # noqa
+    assert '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.1.0/MarkerCluster.Default.css"/>' in out  # noqa
 
     # Verify the script part is okay.
     tmpl = Template("""
-        var {{this.get_name()}} = L.markerClusterGroup();
+        var {{this.get_name()}} = L.markerClusterGroup({
+                {% if this._icon_create_function %}
+                   iconCreateFunction: {{this._icon_create_function}}
+                {% endif %}
+            });
         {{this._parent.get_name()}}.addLayer({{this.get_name()}});
 
         {% for marker in this._children.values() %}
@@ -49,3 +56,7 @@ def test_marker_cluster():
         {% endfor %}
     """)
     assert ''.join(tmpl.render(this=mc).split()) in ''.join(out.split())
+
+    bounds = m.get_bounds()
+    assert bounds == [[35.147332572663785, -11.520684337300109],
+                      [59.839718052359274, 29.94931046497927]], bounds

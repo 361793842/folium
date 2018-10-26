@@ -1,40 +1,77 @@
 # -*- coding: utf-8 -*-
 
-from __future__ import absolute_import
+from __future__ import (absolute_import, division, print_function)
 
-__version__ = '0.2.0.dev'
+from branca.colormap import (ColorMap, LinearColormap, StepColormap)
+from branca.element import (CssLink, Div, Element, Figure, Html, IFrame,
+                            JavascriptLink, Link, MacroElement)
 
-from folium.folium import Map, initialize_notebook, CircleMarker
+from folium._version import get_versions
 
-from folium.map import (FeatureGroup, FitBounds, Icon, LayerControl, Marker,
-                        Popup, TileLayer)
+from folium.features import (
+    ClickForMarker, ColorLine, CustomIcon, DivIcon, GeoJson,
+    LatLngPopup, RegularPolygonMarker, TopoJson, Vega, VegaLite,
+    GeoJsonTooltip,
+)
 
-from folium.features import (ClickForMarker, ColorScale, CustomIcon, DivIcon,
-                             GeoJson, LatLngPopup,
-                             MarkerCluster, MultiPolyLine, PolyLine, Vega,
-                             RegularPolygonMarker, TopoJson, WmsTileLayer)
+from folium.raster_layers import TileLayer, WmsTileLayer
 
-__all__ = ['Map',
-           'initialize_notebook',
-           'CircleMarker',
-           'FeatureGroup',
-           'FitBounds',
-           'Icon',
-           'LayerControl',
-           'Marker',
-           'Popup',
-           'TileLayer',
-           'ClickForMarker',
-           'ColorScale',
-           'CustomIcon',
-           'DivIcon',
-           'GeoJson',
-           'GeoJsonStyle',
-           'LatLngPopup',
-           'MarkerCluster',
-           'MultiPolyLine',
-           'PolyLine',
-           'Vega',
-           'RegularPolygonMarker',
-           'TopoJson',
-           'WmsTileLayer']
+from folium.folium import Map
+
+from folium.map import (
+    FeatureGroup, FitBounds, Icon, LayerControl, Marker, Popup, Tooltip
+)
+
+from folium.vector_layers import Circle, CircleMarker, PolyLine, Polygon, Rectangle  # noqa
+
+import branca
+if tuple(int(x) for x in branca.__version__.split('.')) < (0, 3, 0):
+    raise ImportError('branca version 0.3.0 or higher is required. '
+                      'Update branca with e.g. `pip install branca --upgrade`.')
+
+__version__ = get_versions()['version']
+del get_versions
+
+__all__ = [
+    'CssLink',
+    'Div',
+    'Element',
+    'Figure',
+    'Html',
+    'IFrame',
+    'JavascriptLink',
+    'Link',
+    'MacroElement',
+    'ColorMap',
+    'ColorLine',
+    'LinearColormap',
+    'StepColormap',
+    'Map',
+    'FeatureGroup',
+    'FitBounds',
+    'Icon',
+    'LayerControl',
+    'Marker',
+    'Popup',
+    'Tooltip',
+    'TileLayer',
+    'ClickForMarker',
+    'CustomIcon',
+    'DivIcon',
+    'GeoJson',
+    'GeoJsonStyle',
+    'LatLngPopup',
+    'MarkerCluster',
+    'Vega',
+    'VegaLite',
+    'RegularPolygonMarker',
+    'TopoJson',
+    'WmsTileLayer',
+    # vector_layers
+    'Circle',
+    'CircleMarker',
+    'PolyLine',
+    'Polygon',
+    'Polyline',
+    'Rectangle',
+]

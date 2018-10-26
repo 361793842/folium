@@ -1,377 +1,390 @@
 # -*- coding: utf-8 -*-
-"""
-Folium
--------
 
+"""
 Make beautiful, interactive maps with Python and Leaflet.js
 
 """
 
-from __future__ import absolute_import
+from __future__ import (absolute_import, division, print_function)
 
-import warnings
-import json
+import os
+import time
 
-from folium.six import text_type, binary_type
-from .map import Map as _Map
-from .map import Icon, Marker, Popup, FitBounds
-from .features import (WmsTileLayer, RegularPolygonMarker, Vega, GeoJson,
-                       CircleMarker, LatLngPopup,
-                       ClickForMarker, ColorScale, TopoJson, PolyLine,
-                       MultiPolyLine)
-from .utilities import color_brewer
+from branca.colormap import StepColormap
+from branca.element import CssLink, Element, Figure, JavascriptLink, MacroElement
+from branca.utilities import _parse_size, color_brewer
 
-def initialize_notebook():
-    """Initialize the IPython notebook display elements."""
-    warnings.warn("%s is deprecated and no longer required." %
-                  ("initialize_notebook",),
-                  FutureWarning, stacklevel=2)
-    pass
+from folium.features import GeoJson, TopoJson
+from folium.map import FitBounds
+from folium.raster_layers import TileLayer
+from folium.utilities import _validate_location
+
+from jinja2 import Environment, PackageLoader, Template
+
+ENV = Environment(loader=PackageLoader('folium', 'templates'))
 
 
-class Map(_Map):
-    """This class inherits from the map.Map object in order to provide
-    bindings to former folium API.
+_default_js = [
+    ('leaflet',
+     'https://cdn.jsdelivr.net/npm/leaflet@1.3.4/dist/leaflet.js'),
+    ('jquery',
+     'https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js'),
+    ('bootstrap',
+     'https://maxcdn.bootstrapcdn.com/bootstrap/3.2.0/js/bootstrap.min.js'),
+    ('awesome_markers',
+     'https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js'),  # noqa
+    ]
+
+_default_css = [
+    ('leaflet_css',
+     'https://cdn.jsdelivr.net/npm/leaflet@1.3.4/dist/leaflet.css'),
+    ('bootstrap_css',
+     'https://maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap.min.css'),
+    ('bootstrap_theme_css',
+     'https://maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap-theme.min.css'),  # noqa
+    ('awesome_markers_font_css',
+     'https://maxcdn.bootstrapcdn.com/font-awesome/4.6.3/css/font-awesome.min.css'),  # noqa
+    ('awesome_markers_css',
+     'https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css'),  # noqa
+    ('awesome_rotate_css',
+     'https://rawgit.com/python-visualization/folium/master/folium/templates/leaflet.awesome.rotate.css'),  # noqa
+    ]
+
+
+class GlobalSwitches(Element):
+
+    _template = Template(
+        '<script>'
+        'L_PREFER_CANVAS={% if this.prefer_canvas %}true{% else %}false{% endif %}; '
+        'L_NO_TOUCH={% if this.no_touch %}true{% else %}false{% endif %}; '
+        'L_DISABLE_3D={% if this.disable_3d %}true{% else %}false{% endif %};'
+        '</script>'
+    )
+
+    def __init__(self, prefer_canvas=False, no_touch=False, disable_3d=False):
+        super(GlobalSwitches, self).__init__()
+        self._name = 'GlobalSwitches'
+
+        self.prefer_canvas = prefer_canvas
+        self.no_touch = no_touch
+        self.disable_3d = disable_3d
+
+
+class Map(MacroElement):
+    """Create a Map with Folium and Leaflet.js
+
+    Generate a base map of given width and height with either default
+    tilesets or a custom tileset URL. The following tilesets are built-in
+    to Folium. Pass any of the following to the "tiles" keyword:
+
+        - "OpenStreetMap"
+        - "Mapbox Bright" (Limited levels of zoom for free tiles)
+        - "Mapbox Control Room" (Limited levels of zoom for free tiles)
+        - "Stamen" (Terrain, Toner, and Watercolor)
+        - "Cloudmade" (Must pass API key)
+        - "Mapbox" (Must pass API key)
+        - "CartoDB" (positron and dark_matter)
+
+    You can pass a custom tileset to Folium by passing a Leaflet-style
+    URL to the tiles parameter: ``http://{s}.yourtiles.com/{z}/{x}/{y}.png``
+
+    Parameters
+    ----------
+    location: tuple or list, default None
+        Latitude and Longitude of Map (Northing, Easting).
+    width: pixel int or percentage string (default: '100%')
+        Width of the map.
+    height: pixel int or percentage string (default: '100%')
+        Height of the map.
+    tiles: str, default 'OpenStreetMap'
+        Map tileset to use. Can choose from a list of built-in tiles,
+        pass a custom URL or pass `None` to create a map without tiles.
+    API_key: str, default None
+        API key for Cloudmade or Mapbox tiles.
+    min_zoom: int, default 0
+        Minimum allowed zoom level for the tile layer that is created.
+    max_zoom: int, default 18
+        Maximum allowed zoom level for the tile layer that is created.
+    max_native_zoom: int, default None
+        The highest zoom level at which the tile server can provide tiles.
+        If provided you can zoom in past this level. Else tiles will turn grey.
+    zoom_start: int, default 10
+        Initial zoom level for the map.
+    attr: string, default None
+        Map tile attribution; only required if passing custom tile URL.
+    detect_retina: bool, default False
+        If true and user is on a retina display, it will request four
+        tiles of half the specified size and a bigger zoom level in place
+        of one to utilize the high resolution.
+    crs : str, default 'EPSG3857'
+        Defines coordinate reference systems for projecting geographical points
+        into pixel (screen) coordinates and back.
+        You can use Leaflet's values :
+        * EPSG3857 : The most common CRS for online maps, used by almost all
+        free and commercial tile providers. Uses Spherical Mercator projection.
+        Set in by default in Map's crs option.
+        * EPSG4326 : A common CRS among GIS enthusiasts.
+        Uses simple Equirectangular projection.
+        * EPSG3395 : Rarely used by some commercial tile providers.
+        Uses Elliptical Mercator projection.
+        * Simple : A simple CRS that maps longitude and latitude into
+        x and y directly. May be used for maps of flat surfaces
+        (e.g. game maps). Note that the y axis should still be inverted
+        (going from bottom to top).
+    control_scale : bool, default False
+        Whether to add a control scale on the map.
+    prefer_canvas : bool, default False
+        Forces Leaflet to use the Canvas back-end (if available) for
+        vector layers instead of SVG. This can increase performance
+        considerably in some cases (e.g. many thousands of circle
+        markers on the map).
+    no_touch : bool, default False
+        Forces Leaflet to not use touch events even if it detects them.
+    disable_3d : bool, default False
+        Forces Leaflet to not use hardware-accelerated CSS 3D
+        transforms for positioning (which may cause glitches in some
+        rare environments) even if they're supported.
+    zoom_control : bool, default True
+        Display zoom controls on the map.
+
+    Returns
+    -------
+    Folium Map Object
+
+    Examples
+    --------
+    >>> map = folium.Map(location=[45.523, -122.675],
+    ...                        width=750, height=500)
+    >>> map = folium.Map(location=[45.523, -122.675],
+                               tiles='Mapbox Control Room')
+    >>> map = folium.Map(location=(45.523, -122.675), max_zoom=20,
+                               tiles='Cloudmade', API_key='YourKey')
+    >>> map = folium.Map(
+    ...    location=[45.523, -122.675],
+    ...    zoom_start=2,
+    ...    tiles='http://{s}.tiles.mapbox.com/v3/mapbox.control-room/{z}/{x}/{y}.png',
+    ...    attr='Mapbox attribution'
+    ...)
+
     """
-    def create_map(self, path='map.html', plugin_data_out=True, template=None):
-        """Write Map output to HTML.
+    _template = Template(u"""
+{% macro header(this, kwargs) %}
+    <style>#{{this.get_name()}} {
+        position: {{this.position}};
+        width: {{this.width[0]}}{{this.width[1]}};
+        height: {{this.height[0]}}{{this.height[1]}};
+        left: {{this.left[0]}}{{this.left[1]}};
+        top: {{this.top[0]}}{{this.top[1]}};
+        }
+    </style>
+{% endmacro %}
+{% macro html(this, kwargs) %}
+    <div class="folium-map" id="{{this.get_name()}}" ></div>
+{% endmacro %}
 
-        Parameters:
-        -----------
-        path: string, default 'map.html'
-            Path for HTML output for map
-        plugin_data_out: boolean, default True
-            Deprecated, not used anymore
-        template: string, default None
-            Deprecated, not used anymore
-        """
-        warnings.warn("%s is deprecated. Use %s instead" % ("Map.create_map",
-                                                            "Map.save"),
-                      FutureWarning, stacklevel=2)
-        self.save(path)
+{% macro script(this, kwargs) %}
+    {% if this.max_bounds %}
+        var southWest = L.latLng({{ this.min_lat }}, {{ this.min_lon }});
+        var northEast = L.latLng({{ this.max_lat }}, {{ this.max_lon }});
+        var bounds = L.latLngBounds(southWest, northEast);
+    {% else %}
+        var bounds = null;
+    {% endif %}
 
-    def add_wms_layer(self, wms_name=None, wms_url=None, wms_format=None,
-                      wms_layers=None, wms_transparent=True):
-        """Adds a simple tile layer.
+    var {{this.get_name()}} = L.map(
+        '{{this.get_name()}}', {
+        center: [{{this.location[0]}}, {{this.location[1]}}],
+        zoom: {{this.zoom_start}},
+        maxBounds: bounds,
+        layers: [],
+        worldCopyJump: {{this.world_copy_jump.__str__().lower()}},
+        crs: L.CRS.{{this.crs}},
+        zoomControl: {{this.zoom_control.__str__().lower()}},
+        });
+{% if this.control_scale %}L.control.scale().addTo({{this.get_name()}});{% endif %}
+    
+    {% if this.objects_to_stay_in_front %}
+    function objects_in_front() {
+        {% for obj in this.objects_to_stay_in_front %}    
+            {{ obj.get_name() }}.bringToFront();
+        {% endfor %}
+    };
 
-        Parameters
-        ----------
-        wms_name: string
-            name of wms layer
-        wms_url : string
-            url of wms layer
-        """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("Map.add_wms_layer",
-                       "Map.add_children(WmsTileLayer(...))"),
-                      FutureWarning, stacklevel=2)
-        wms = WmsTileLayer(wms_url, name=wms_name, format=wms_format,
-                           layers=wms_layers, transparent=wms_transparent,
-                           attr=None)
-        self.add_children(wms, name=wms_name)
+{{ this.get_name() }}.on("overlayadd", objects_in_front);
+$(document).ready(objects_in_front);
+{% endif %}
+{% endmacro %}
+""")  # noqa
 
-    def simple_marker(self, location=None, popup=None,
-                      marker_color='blue', marker_icon='info-sign',
-                      clustered_marker=False, icon_angle=0, popup_width=300):
-        """Create a simple stock Leaflet marker on the map, with optional
-        popup text or Vincent visualization.
+    def __init__(self, location=None, width='100%', height='100%',
+                 left='0%', top='0%', position='relative',
+                 tiles='OpenStreetMap', API_key=None, max_zoom=18, min_zoom=0,
+                 max_native_zoom=None, zoom_start=10, world_copy_jump=False,
+                 no_wrap=False, attr=None, min_lat=-90, max_lat=90,
+                 min_lon=-180, max_lon=180, max_bounds=False,
+                 detect_retina=False, crs='EPSG3857', control_scale=False,
+                 prefer_canvas=False, no_touch=False, disable_3d=False,
+                 subdomains='abc', png_enabled=False, zoom_control=True):
+        super(Map, self).__init__()
+        self._name = 'Map'
+        self._env = ENV
+        # Undocumented for now b/c this will be subject to a re-factor soon.
+        self._png_image = None
+        self.png_enabled = png_enabled
 
-        Parameters
-        ----------
-        location: tuple or list, default None
-            Latitude and Longitude of Marker (Northing, Easting)
-        popup: string or tuple, default 'Pop Text'
-            Input text or visualization for object. Can pass either text,
-            or a tuple of the form (Vincent object, 'vis_path.json')
-            It is possible to adjust the width of text/HTML popups
-            using the optional keywords `popup_width` (default is 300px).
-        marker_color
-            color of marker you want
-        marker_icon
-            icon from (http://getbootstrap.com/components/) you want on the
-            marker
-        clustered_marker
-            boolean of whether or not you want the marker clustered with
-            other markers
-
-        Returns
-        -------
-        Marker names and HTML in obj.template_vars
-
-        Example
-        -------
-        >>>map.simple_marker(location=[45.5, -122.3], popup='Portland, OR')
-        >>>map.simple_marker(location=[45.5, -122.3], popup=(vis, 'vis.json'))
-
-        """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("simple_marker", "add_children(Marker)"),
-                      FutureWarning, stacklevel=2)
-        if clustered_marker:
-            raise ValueError("%s is deprecated. Use %s instead" %
-                             ("clustered_marker", "MarkerCluster"))
-        if isinstance(popup, text_type) or isinstance(popup, binary_type):
-            popup_ = Popup(popup, max_width=popup_width)
-        elif isinstance(popup, tuple):
-            popup_ = Popup(max_width=popup_width)
-            Vega(
-                json.loads(popup[0].to_json()),
-                width="100%",
-                height="100%",
-                ).add_to(popup_)
+        if not location:
+            # If location is not passed we center and zoom out.
+            self.location = [0, 0]
+            self.zoom_start = 1
         else:
-            popup_ = None
-        marker = Marker(location,
-                        popup=popup_,
-                        icon=Icon(color=marker_color,
-                                  icon=marker_icon,
-                                  angle=icon_angle))
-        self.add_children(marker)
+            self.location = _validate_location(location)
+            self.zoom_start = zoom_start
 
-    def line(self, locations,
-             line_color=None, line_opacity=None, line_weight=None,
-             popup=None, popup_width=300, latlon=True):
-        """Add a line to the map with optional styles.
+        Figure().add_child(self)
 
-        Parameters
-        ----------
-        locations: list of points (latitude, longitude)
-            Latitude and Longitude of line (Northing, Easting)
-        line_color: string, default Leaflet's default ('#03f')
-        line_opacity: float, default Leaflet's default (0.5)
-        line_weight: float, default Leaflet's default (5)
-        popup: string or tuple, default 'Pop Text'
-            Input text or visualization for object. Can pass either text,
-            or a tuple of the form (Vincent object, 'vis_path.json')
-            It is possible to adjust the width of text/HTML popups
-            using the optional keywords `popup_width` (default is 300px).
-        latlon: bool, default True
-            Whether locations are given in the form [[lat, lon]]
-            or not ([[lon, lat]] if False).
-            Note that the default GeoJson format is latlon=False,
-            while Leaflet polyline's default is latlon=True.
+        # Map Size Parameters.
+        self.width = _parse_size(width)
+        self.height = _parse_size(height)
+        self.left = _parse_size(left)
+        self.top = _parse_size(top)
+        self.position = position
 
-        Note: If the optional styles are omitted, they will not be included
-        in the HTML output and will obtain the Leaflet defaults listed above.
+        self.min_lat = min_lat
+        self.max_lat = max_lat
+        self.min_lon = min_lon
+        self.max_lon = max_lon
+        self.max_bounds = max_bounds
+        self.no_wrap = no_wrap
+        self.world_copy_jump = world_copy_jump
 
-        Example
-        -------
-        >>>map.line(locations=[(45.5, -122.3), (42.3, -71.0)])
-        >>>map.line(locations=[(45.5, -122.3), (42.3, -71.0)],
-                    line_color='red', line_opacity=1.0)
+        self.crs = crs
+        self.control_scale = control_scale
+        self.zoom_control = zoom_control
 
-        """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("line", "add_children(PolyLine)"),
-                      FutureWarning, stacklevel=2)
-        p = PolyLine(locations,
-                     color=line_color,
-                     weight=line_weight,
-                     opacity=line_opacity,
-                     latlon=latlon,
-                     )
+        self.global_switches = GlobalSwitches(
+            prefer_canvas,
+            no_touch,
+            disable_3d
+        )
 
-        if popup is not None:
-            p.add_children(Popup(popup, max_width=popup_width))
+        self.objects_to_stay_in_front = []
 
-        self.add_children(p)
+        if tiles:
+            self.add_tile_layer(
+                tiles=tiles, min_zoom=min_zoom, max_zoom=max_zoom,
+                max_native_zoom=max_native_zoom, no_wrap=no_wrap, attr=attr,
+                API_key=API_key, detect_retina=detect_retina,
+                subdomains=subdomains
+            )
 
-    def multiline(self, locations, line_color=None, line_opacity=None,
-                  line_weight=None, popup=None, popup_width=300, latlon=True):
-        """Add a multiPolyline to the map with optional styles.
-
-        A multiPolyline is single layer that consists of several polylines that
-        share styling/popup.
-
-        Parameters
-        ----------
-        locations: list of lists of points (latitude, longitude)
-            Latitude and Longitude of line (Northing, Easting)
-        line_color: string, default Leaflet's default ('#03f')
-        line_opacity: float, default Leaflet's default (0.5)
-        line_weight: float, default Leaflet's default (5)
-        popup: string or tuple, default 'Pop Text'
-            Input text or visualization for object. Can pass either text,
-            or a tuple of the form (Vincent object, 'vis_path.json')
-            It is possible to adjust the width of text/HTML popups
-            using the optional keywords `popup_width` (default is 300px).
-        latlon: bool, default True
-            Whether locations are given in the form [[lat, lon]]
-            or not ([[lon, lat]] if False).
-            Note that the default GeoJson format is latlon=False,
-            while Leaflet polyline's default is latlon=True.
-
-        Note: If the optional styles are omitted, they will not be included
-        in the HTML output and will obtain the Leaflet defaults listed above.
-
-        Example
-        -------
-        # FIXME: Add another example.
-        >>> m.multiline(locations=[[(45.5236, -122.675), (45.5236, -122.675)],
-                                   [(45.5237, -122.675), (45.5237, -122.675)],
-                                   [(45.5238, -122.675), (45.5238, -122.675)]])
-        >>> m.multiline(locations=[[(45.5236, -122.675), (45.5236, -122.675)],
-                                   [(45.5237, -122.675), (45.5237, -122.675)],
-                                   [(45.5238, -122.675), (45.5238, -122.675)]],
-                                   line_color='red', line_weight=2,
-                                   line_opacity=1.0)
-        """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("multiline", "add_children(MultiPolyLine)"),
-                      FutureWarning, stacklevel=2)
-        p = MultiPolyLine(locations,
-                          color=line_color,
-                          weight=line_weight,
-                          opacity=line_opacity,
-                          latlon=latlon)
-
-        if popup is not None:
-            p.add_children(Popup(popup, max_width=popup_width))
-
-        self.add_children(p)
-
-    def circle_marker(self, location=None, radius=500, popup=None,
-                      line_color='black', fill_color='black',
-                      fill_opacity=0.6, popup_width=300):
-        """Create a simple circle marker on the map, with optional popup text
-        or Vincent visualization.
-
-        Parameters
-        ----------
-        location: tuple or list, default None
-            Latitude and Longitude of Marker (Northing, Easting)
-        radius: int, default 500
-            Circle radius, in pixels
-        popup: string or tuple, default 'Pop Text'
-            Input text or visualization for object. Can pass either text,
-            or a tuple of the form (Vincent object, 'vis_path.json')
-            It is possible to adjust the width of text/HTML popups
-            using the optional keywords `popup_width` (default is 300px).
-        line_color: string, default black
-            Line color. Can pass hex value here as well.
-        fill_color: string, default black
-            Fill color. Can pass hex value here as well.
-        fill_opacity: float, default 0.6
-            Circle fill opacity
-
-        Returns
-        -------
-        Circle names and HTML in obj.template_vars
-
-        Example
-        -------
-        >>>map.circle_marker(location=[45.5, -122.3],
-                             radius=1000, popup='Portland, OR')
-        >>>map.circle_marker(location=[45.5, -122.3],
-                             radius=1000, popup=(bar_chart, 'bar_data.json'))
-
-        """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("circle_marker", "add_children(CircleMarker)"),
-                      FutureWarning, stacklevel=2)
-        if isinstance(popup, text_type) or isinstance(popup, binary_type):
-            popup_ = Popup(popup, max_width=popup_width)
-        elif isinstance(popup, tuple):
-            popup_ = Popup(Vega(json.loads(popup[0].to_json()),
-                                width="100%", height="100%"),
-                           max_width=popup_width)
+    def _repr_html_(self, **kwargs):
+        """Displays the HTML Map in a Jupyter notebook."""
+        if self._parent is None:
+            self.add_to(Figure())
+            out = self._parent._repr_html_(**kwargs)
+            self._parent = None
         else:
-            popup_ = None
-        marker = CircleMarker(location,
-                              radius=radius,
-                              color=line_color,
-                              fill_color=fill_color,
-                              fill_opacity=fill_opacity,
-                              popup=popup_)
-        self.add_children(marker)
+            out = self._parent._repr_html_(**kwargs)
+        return out
 
-    def polygon_marker(self, location=None, line_color='black', line_opacity=1,
-                       line_weight=2, fill_color='blue', fill_opacity=1,
-                       num_sides=4, rotation=0, radius=15, popup=None,
-                       popup_width=300):
-        """Custom markers using the Leaflet Data Vis Framework.
+    def _to_png(self, delay=3):
+        """Export the HTML to byte representation of a PNG image.
 
+        Uses Phantom JS to render the HTML and record a PNG. You may need to
+        adjust the `delay` time keyword argument if maps render without data or tiles.
 
-        Parameters
-        ----------
-        location: tuple or list, default None
-            Latitude and Longitude of Marker (Northing, Easting)
-        line_color: string, default 'black'
-            Marker line color
-        line_opacity: float, default 1
-            Line opacity, scale 0-1
-        line_weight: int, default 2
-            Stroke weight in pixels
-        fill_color: string, default 'blue'
-            Marker fill color
-        fill_opacity: float, default 1
-            Marker fill opacity
-        num_sides: int, default 4
-            Number of polygon sides
-        rotation: int, default 0
-            Rotation angle in degrees
-        radius: int, default 15
-            Marker radius, in pixels
-        popup: string or tuple, default 'Pop Text'
-            Input text or visualization for object. Can pass either text,
-            or a tuple of the form (Vincent object, 'vis_path.json')
-            It is possible to adjust the width of text/HTML popups
-            using the optional keywords `popup_width` (default is 300px).
+        Examples
+        --------
+        >>> map._to_png()
+        >>> map._to_png(time=10)  # Wait 10 seconds between render and snapshot.
+        """
 
-        Returns
-        -------
-        Polygon marker names and HTML in obj.template_vars
+        if self._png_image is None:
+            import selenium.webdriver
+
+            driver = selenium.webdriver.PhantomJS(
+                service_log_path=os.path.devnull
+            )
+            driver.get('about:blank')
+            html = self.get_root().render()
+            html = html.replace('\'', '"').replace('"', '\\"')
+            html = html.replace('\n', '')
+            driver.execute_script('document.write(\"{}\")'.format(html))
+            driver.maximize_window()
+            # Ignore user map size.
+            # todo: fix this
+            # driver.execute_script("document.body.style.width = '100%';")  # noqa
+            # We should probably monitor if some element is present,
+            # but this is OK for now.
+            time.sleep(delay)
+            png = driver.get_screenshot_as_png()
+            driver.quit()
+            self._png_image = png
+        return self._png_image
+
+    def _repr_png_(self):
+        """Displays the PNG Map in a Jupyter notebook."""
+        # The notebook calls all _repr_*_ by default.
+        # We don't want that here b/c this one is quite slow.
+        if not self.png_enabled:
+            return None
+        return self._to_png()
+
+    def add_tile_layer(self, tiles='OpenStreetMap', name=None,
+                       API_key=None, max_zoom=18, min_zoom=0,
+                       max_native_zoom=None, attr=None, active=False,
+                       detect_retina=False, no_wrap=False, subdomains='abc',
+                       **kwargs):
+        """
+        Add a tile layer to the map. See TileLayer for options.
 
         """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("polygon_marker", "add_children(RegularPolygonMarker)"),
-                      FutureWarning, stacklevel=2)
-        if isinstance(popup, text_type) or isinstance(popup, binary_type):
-            popup_ = Popup(popup, max_width=popup_width)
-        elif isinstance(popup, tuple):
-            popup_ = Popup(Vega(json.loads(popup[0].to_json()),
-                                width="100%", height="100%"),
-                           max_width=popup_width)
-        else:
-            popup_ = None
-        marker = RegularPolygonMarker(location,
-                                      popup=popup_,
-                                      color=line_color,
-                                      opacity=line_opacity,
-                                      weight=line_weight,
-                                      fill_color=fill_color,
-                                      fill_opacity=fill_opacity,
-                                      number_of_sides=num_sides,
-                                      rotation=rotation,
-                                      radius=radius)
-        self.add_children(marker)
+        tile_layer = TileLayer(tiles=tiles, name=name,
+                               min_zoom=min_zoom, max_zoom=max_zoom,
+                               max_native_zoom=max_native_zoom,
+                               attr=attr, API_key=API_key,
+                               detect_retina=detect_retina,
+                               subdomains=subdomains,
+                               no_wrap=no_wrap)
+        self.add_child(tile_layer, name=tile_layer.tile_name)
 
-    def lat_lng_popover(self):
-        """Enable popovers to display Lat and Lon on each click."""
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("lat_lng_popover", "add_children(LatLngPopup)"),
-                      FutureWarning, stacklevel=2)
-        self.add_children(LatLngPopup())
+    def render(self, **kwargs):
+        """Renders the HTML representation of the element."""
+        figure = self.get_root()
+        assert isinstance(figure, Figure), ('You cannot render this Element '
+                                            'if it is not in a Figure.')
 
-    def click_for_marker(self, popup=None):
-        """Enable the addition of markers via clicking on the map. The marker
-        popup defaults to Lat/Lon, but custom text can be passed via the
-        popup parameter. Double click markers to remove them.
+        # Set global switches
+        figure.header.add_child(self.global_switches, name='global_switches')
 
-        Parameters
-        ----------
-        popup:
-            Custom popup text
+        # Import Javascripts
+        for name, url in _default_js:
+            figure.header.add_child(JavascriptLink(url), name=name)
 
-        Example
-        -------
-        >>>map.click_for_marker(popup='Your Custom Text')
+        # Import Css
+        for name, url in _default_css:
+            figure.header.add_child(CssLink(url), name=name)
 
-        """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("click_for_marker", "add_children(ClickForMarker)"),
-                      FutureWarning, stacklevel=2)
-        self.add_children(ClickForMarker(popup=popup))
+        figure.header.add_child(Element(
+            '<style>html, body {'
+            'width: 100%;'
+            'height: 100%;'
+            'margin: 0;'
+            'padding: 0;'
+            '}'
+            '</style>'), name='css_style')
+
+        figure.header.add_child(Element(
+            '<style>#map {'
+            'position:absolute;'
+            'top:0;'
+            'bottom:0;'
+            'right:0;'
+            'left:0;'
+            '}'
+            '</style>'), name='map_style')
+
+        super(Map, self).render(**kwargs)
 
     def fit_bounds(self, bounds, padding_top_left=None,
                    padding_bottom_right=None, padding=None, max_zoom=None):
@@ -394,76 +407,33 @@ class Map(_Map):
         max_zoom: int, default None
             Maximum zoom to be used.
 
-        Example
-        -------
+        Examples
+        --------
         >>> map.fit_bounds([[52.193636, -2.221575], [52.636878, -1.139759]])
 
         """
-        self.add_children(FitBounds(bounds,
-                                    padding_top_left=padding_top_left,
-                                    padding_bottom_right=padding_bottom_right,
-                                    padding=padding,
-                                    max_zoom=max_zoom,
-                                    )
-                          )
+        self.add_child(FitBounds(bounds,
+                                 padding_top_left=padding_top_left,
+                                 padding_bottom_right=padding_bottom_right,
+                                 padding=padding,
+                                 max_zoom=max_zoom,
+                                 )
+                       )
 
-    def add_plugin(self, plugin):
-        """Adds a plugin to the map.
-
-        Parameters
-        ----------
-            plugin: folium.plugins object
-                A plugin to be added to the map. It has to implement the
-                methods `render_html`, `render_css` and `render_js`.
+    def choropleth(self, geo_data, data=None, columns=None, key_on=None,
+                   threshold_scale=None, fill_color='blue', fill_opacity=0.6,
+                   line_color='black', line_weight=1, line_opacity=1, name=None,
+                   legend_name='', topojson=None, reset=False, smooth_factor=None,
+                   highlight=None):
         """
-        warnings.warn("%s is deprecated. Use %s instead" %
-                      ("add_plugin", "add_children"),
-                      FutureWarning, stacklevel=2)
-        self.add_children(plugin)
-
-#    def _auto_bounds(self):
-#        if 'fit_bounds' in self.template_vars:
-#            return
-#        # Get count for each feature type
-#        ft_names = ["marker", "line", "circle", "polygon", "multiline"]
-#        ft_names = [i for i in ft_names if i in self.mark_cnt]
-#
-#        # Make a comprehensive list of all the features we want to fit
-#        feat_str = ["{name}_{count}".format(name=ft_name,
-#                                            count=self.mark_cnt[ft_name])
-#                    for ft_name in ft_names for
-#                    count in range(1, self.mark_cnt[ft_name]+1)]
-#        feat_str = "[" + ', '.join(feat_str) + "]"
-#
-#        fit_bounds = self.env.get_template('fit_bounds.js')
-#        fit_bounds_str = fit_bounds.render({
-#            'autobounds': not self.location,
-#            'features': feat_str,
-#            'fit_bounds_options': json.dumps({'padding': [30, 30]}),
-#        })
-#
-#        self.template_vars.update({'fit_bounds': fit_bounds_str.strip()})
-
-    def geo_json(self, *args, **kwargs):
-        """This method is deprecated and will be removed in v0.2.1. See
-        `Map.choropleth` instead.
-        """
-        warnings.warn('This method is deprecated. Please use Map.choropleth instead.')
-        return self.choropleth(*args, **kwargs)
-
-    def choropleth(self, geo_path=None, geo_str=None, data_out='data.json',
-                 data=None, columns=None, key_on=None, threshold_scale=None,
-                 fill_color='blue', fill_opacity=0.6, line_color='black',
-                 line_weight=1, line_opacity=1, legend_name="",
-                 topojson=None, reset=False):
-        """Apply a GeoJSON overlay to the map.
+        Apply a GeoJSON overlay to the map.
 
         Plot a GeoJSON overlay on the base map. There is no requirement
         to bind data (passing just a GeoJSON plots a single-color overlay),
         but there is a data binding option to map your columnar data to
         different feature objects with a color scale.
 
-        If data is passed as a Pandas dataframe, the "columns" and "key-on"
+        If data is passed as a Pandas DataFrame, the "columns" and "key-on"
         keywords must be included, the first to indicate which DataFrame
         columns to use, the second to indicate the layer in the GeoJSON
         on which to key the data. The 'columns' keyword does not need to be
@@ -475,27 +445,24 @@ class Map(_Map):
         passed to `threshold_scale` of length <=6, in order to match the
         color brewer range.
 
-        TopoJSONs can be passed as "geo_path", but the "topojson" keyword must
+        TopoJSONs can be passed as "geo_data", but the "topojson" keyword must
         also be passed with the reference to the topojson objects to convert.
         See the topojson.feature method in the TopoJSON API reference:
-        https://github.com/mbostock/topojson/wiki/API-Reference
+        https://github.com/topojson/topojson/wiki/API-Reference
 
 
         Parameters
         ----------
-        geo_path: string, default None
-            URL or File path to your GeoJSON data
-        geo_str: string, default None
-            String of GeoJSON, alternative to geo_path
-        data_out: string, default 'data.json'
-            Path to write Pandas DataFrame/Series to JSON if binding data
+        geo_data: string/object
+            URL, file path, or data (json, dict, geopandas, etc) to your GeoJSON
+            geometries
         data: Pandas DataFrame or Series, default None
             Data to bind to the GeoJSON.
         columns: dict or tuple, default None
             If the data is a Pandas DataFrame, the columns of data to be bound.
             Must pass column 1 as the key, and column 2 the values.
         key_on: string, default None
-            Variable in the GeoJSON file to bind the data to. Must always
+            Variable in the `geo_data` GeoJSON file to bind the data to. Must
             start with 'feature' and be in JavaScript objection notation.
             Ex: 'feature.id' or 'feature.properties.statename'.
         threshold_scale: list, default None
@@ -522,35 +489,42 @@ class Map(_Map):
             keyword argument will enable conversion to GeoJSON.
         reset: boolean, default False
             Remove all current geoJSON layers, start with new layer
+        smooth_factor: float, default None
+            How much to simplify the polyline on each zoom level. More means
+            better performance and smoother look, and less means more accurate
+            representation. Leaflet defaults to 1.0.
+        highlight: boolean, default False
+            Enable highlight functionality when hovering over a GeoJSON area.
 
-        Output
-        ------
+        Returns
+        -------
         GeoJSON data layer in obj.template_vars
 
-        Example
-        -------
-        >>> m.choropleth(geo_path='us-states.json', line_color='blue',
-                      line_weight=3)
-        >>> m.choropleth(geo_path='geo.json', data=df,
-                      columns=['Data 1', 'Data 2'],
-                      key_on='feature.properties.myvalue', fill_color='PuBu',
-                      threshold_scale=[0, 20, 30, 40, 50, 60])
-        >>> m.choropleth(geo_path='countries.json', topojson='objects.countries')
-        """
+        Examples
+        --------
+        >>> m.choropleth(geo_data='us-states.json', line_color='blue',
+        ...              line_weight=3)
+        >>> m.choropleth(geo_data='geo.json', data=df,
+        ...              columns=['Data 1', 'Data 2'],
+        ...              key_on='feature.properties.myvalue',
+        ...              fill_color='PuBu',
+        ...              threshold_scale=[0, 20, 30, 40, 50, 60])
+        >>> m.choropleth(geo_data='countries.json',
+        ...              topojson='objects.countries')
+        >>> m.choropleth(geo_data='geo.json', data=df,
+        ...              columns=['Data 1', 'Data 2'],
+        ...              key_on='feature.properties.myvalue',
+        ...              fill_color='PuBu',
+        ...              threshold_scale=[0, 20, 30, 40, 50, 60],
+        ...              highlight=True)
 
-        if threshold_scale and len(threshold_scale) > 6:
-            raise ValueError
+        """
+        if threshold_scale is not None and len(threshold_scale) > 6:
+            raise ValueError('The length of threshold_scale is {}, but it may '
+                             'not be longer than 6.'.format(len(threshold_scale)))  # noqa
         if data is not None and not color_brewer(fill_color):
             raise ValueError('Please pass a valid color brewer code to '
                              'fill_local. See docstring for valid codes.')
-
-        # Create GeoJson object
-        if geo_path:
-            geo_data = open(geo_path)
-        elif geo_str:
-            geo_data = geo_str
-        else:
-            geo_data = {}
 
         # Create color_data dict
         if hasattr(data, 'set_index'):
@@ -565,16 +539,10 @@ class Map(_Map):
             color_data = None
 
         # Compute color_domain
-        if threshold_scale:
+        if threshold_scale is not None:
             color_domain = list(threshold_scale)
         elif color_data:
             # To avoid explicit pandas dependency ; changed default behavior.
-            warnings.warn("'threshold_scale' default behavior has changed."
-                          " Now you get a linear scale between the 'min' and"
-                          " the 'max' of your data."
-                          " To get former behavior, use"
-                          " folium.utilities.split_six.",
-                          FutureWarning, stacklevel=2)
             data_min = min(color_data.values())
             data_max = max(color_data.values())
             if data_min == data_max:
@@ -590,117 +558,82 @@ class Map(_Map):
         else:
             color_domain = None
 
-        if color_domain and key_on:
+        if color_domain and key_on is not None:
             key_on = key_on[8:] if key_on.startswith('feature.') else key_on
             color_range = color_brewer(fill_color, n=len(color_domain))
-            get_by_key = lambda obj,key : (obj.get(key,None) if len(key.split('.'))<=1
-                                           else get_by_key(obj.get(key.split('.')[0],None),
-                                                           '.'.join(key.split('.')[1:])))
-            color_scale_fun = lambda x: color_range[len([u for u in color_domain
-                                                         if u<=color_data[get_by_key(x,key_on)]])]
-        else:
-            color_scale_fun = lambda x: fill_color
 
-        style_function = lambda x: {
-            "weight" : line_weight,
-            "opactiy": line_opacity,
-            "color" : line_color,
-            "fillOpacity" : fill_opacity,
-            "fillColor" : color_scale_fun(x)
+            def get_by_key(obj, key):
+                return (obj.get(key, None) if len(key.split('.')) <= 1 else
+                        get_by_key(obj.get(key.split('.')[0], None),
+                                   '.'.join(key.split('.')[1:])))
+
+            def color_scale_fun(x):
+                idx = len(
+                    [
+                        u for u in color_domain if
+                        get_by_key(x, key_on) in color_data and
+                        u <= color_data[get_by_key(x, key_on)]
+                    ]
+                )
+                return color_range[idx-1]
+        else:
+            def color_scale_fun(x):
+                return fill_color
+
+        def style_function(x):
+            return {
+                'weight': line_weight,
+                'opacity': line_opacity,
+                'color': line_color,
+                'fillOpacity': fill_opacity,
+                'fillColor': color_scale_fun(x)
+            }
+
+        def highlight_function(x):
+            return {
+                'weight': line_weight + 2,
+                'fillOpacity': fill_opacity + .2
             }
 
         if topojson:
-            geo_json = TopoJson(geo_data, topojson)
+            geo_json = TopoJson(
+                geo_data,
+                topojson,
+                name=name,
+                style_function=style_function,
+                smooth_factor=smooth_factor)
         else:
-            geo_json = GeoJson(geo_data, style_function=style_function)
+            geo_json = GeoJson(
+                geo_data,
+                name=name,
+                style_function=style_function,
+                smooth_factor=smooth_factor,
+                highlight_function=highlight_function if highlight else None)
 
-        self.add_children(geo_json)
+        self.add_child(geo_json)
 
-        # Create ColorScale.
+        # Create ColorMap.
         if color_domain:
-            color_scale = ColorScale(color_domain, fill_color, caption=legend_name)
-            self.add_children(color_scale)
+            brewed = color_brewer(fill_color, n=len(color_domain))
+            color_scale = StepColormap(
+                brewed[1:len(color_domain)],
+                index=color_domain,
+                vmin=color_domain[0],
+                vmax=color_domain[-1],
+                caption=legend_name,
+                )
+            self.add_child(color_scale)
 
-    def image_overlay(self, data, opacity=0.25, min_lat=-90.0, max_lat=90.0,
-                      min_lon=-180.0, max_lon=180.0, origin='upper',
-                      colormap=None, image_name=None, filename=None,
-                      mercator_project=False):
-        """
-        Simple image overlay of raster data from a numpy array.  This is a
-        lightweight way to overlay geospatial data on top of a map.  If your
-        data is high res, consider implementing a WMS server and adding a WMS
-        layer.
+    def keep_in_front(self, *args):
+        """Pass one or multiples object that must stay in front.
 
-        This function works by generating a PNG file from a numpy array.  If
-        you do not specify a filename, it will embed the image inline.
-        Otherwise, it saves the file in the current directory, and then adds
-        it as an image overlay layer in leaflet.js.  By default, the image is
-        placed and stretched using bounds that cover the entire globe.
+        The ordering matters, the last one is put on top.
 
         Parameters
         ----------
-        data: numpy array OR url string, required.
-            if numpy array, must be a image format,
-            i.e., NxM (mono), NxMx3 (rgb), or NxMx4 (rgba)
-            if url, must be a valid url to a image (local or external)
-        opacity: float, default 0.25
-            Image layer opacity in range 0 (transparent) to 1 (opaque)
-        min_lat: float, default -90.0
-        max_lat: float, default  90.0
-        min_lon: float, default -180.0
-        max_lon: float, default  180.0
-        image_name: string, default None
-            The name of the layer object in leaflet.js
-        filename: string, default None
-            Optional file name of output.png for image overlay.
-            Use `None` for inline PNG.
-        origin : ['upper' | 'lower'], optional, default 'upper'
-            Place the [0,0] index of the array in the upper left or lower left
-            corner of the axes.
-
-        colormap : callable, used only for `mono` image.
-            Function of the form [x -> (r,g,b)] or [x -> (r,g,b,a)]
-            for transforming a mono image into RGB.
-            It must output iterables of length 3 or 4, with values
-            between 0 and 1. Hint: you can use colormaps from `matplotlib.cm`.
-
-        mercator_project : bool, default False, used only for array-like image.
-            Transforms the data to project (longitude,latitude) coordinates
-            to the Mercator projection.
-        Output
-        ------
-        Image overlay data layer in obj.template_vars
-
-        Examples
-        -------
-        # assumes a map object `m` has been created
-        >>> import numpy as np
-        >>> data = np.random.random((100,100))
-
-        # to make a rgba from a specific matplotlib colormap:
-        >>> import matplotlib.cm as cm
-        >>> cmapper = cm.cm.ColorMapper('jet')
-        >>> data2 = cmapper.to_rgba(np.random.random((100,100)))
-        >>> # Place the data over all of the globe (will be pretty pixelated!)
-        >>> m.image_overlay(data)
-        >>> # Put it only over a single city (Paris).
-        >>> m.image_overlay(data, min_lat=48.80418, max_lat=48.90970,
-        ...                 min_lon=2.25214, max_lon=2.44731)
-
+        *args :
+            Variable length argument list. Any folium object that counts as an
+            overlay. For example FeatureGroup or a vector object such as Marker.
         """
-        warnings.warn('This method is deprecated. Please use `Map.add_children('
-                      'folium.plugins.ImageOverlay(...))` instead.')
-        from .plugins import ImageOverlay
-        from .utilities import write_png
-
-        if filename:
-            image = write_png(data, origin=origin, colormap=colormap)
-            open(filename, 'wb').write(image)
-            data = filename
-
-        self.add_children(ImageOverlay(data, [[min_lat, min_lon],
-                                              [max_lat, max_lon]],
-                                       opacity=opacity,
-                                       origin=origin,
-                                       colormap=colormap,
-                                       mercator_project=mercator_project))
+        for obj in args:
+            self.objects_to_stay_in_front.append(obj)
